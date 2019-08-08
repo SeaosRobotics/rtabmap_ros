@@ -1746,6 +1746,11 @@ void CoreWrapper::process(
 			odomFrameId_ = odomFrameId;
 			mapToOdomMutex_.unlock();
 
+			float xc, yc, zc, rollc, pitchc, yawc;
+			mapToOdom_.getTranslationAndEulerAngles(xc, yc, zc, rollc, pitchc, yawc);
+			Transform negate(0, 0, 0, 0, 0, -yawc);
+			mapToOdom_ = mapToOdom_ * negate;
+
 			if(data.id() < 0)
 			{
 				NODELET_INFO("Intermediate node added");
