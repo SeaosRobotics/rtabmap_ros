@@ -19,7 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
              cv_bridge roscpp rospy sensor_msgs std_msgs std_srvs nav_msgs geometry_msgs visualization_msgs
              image_transport tf tf_conversions tf2_ros eigen_conversions laser_geometry pcl_conversions 
              pcl_ros nodelet dynamic_reconfigure message_filters class_loader rosgraph_msgs
-             genmsg stereo_msgs move_base_msgs image_geometry 
+             genmsg stereo_msgs move_base_msgs image_geometry pluginlib
 )
 
 # Optional components
@@ -185,6 +185,7 @@ SET(rtabmap_ros_lib_src
    src/MsgConversion.cpp
    src/MapsManager.cpp
    src/OdometryROS.cpp
+   src/PluginInterface.cpp
 )
   
 SET(rtabmap_plugins_lib_src
@@ -417,9 +418,14 @@ IF(costmap_2d_FOUND)
     include_directories(${costmap_2d_INCLUDE_DIRS})
     add_library(rtabmap_costmap_plugins
        src/costmap_2d/static_layer.cpp
+    )
+    add_library(rtabmap_costmap_plugins2
        src/costmap_2d/voxel_layer.cpp
     )
     target_link_libraries(rtabmap_costmap_plugins
+      ${costmap_2d_LIBRARIES}
+    )
+    target_link_libraries(rtabmap_costmap_plugins2
       ${costmap_2d_LIBRARIES}
     )
 ENDIF(costmap_2d_FOUND)
@@ -517,6 +523,7 @@ ENDIF(rviz_FOUND)
 IF(costmap_2d_FOUND)
     install(TARGETS 
        rtabmap_costmap_plugins
+       rtabmap_costmap_plugins2
        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -539,4 +546,3 @@ ENDIF(costmap_2d_FOUND)
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
-
