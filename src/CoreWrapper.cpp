@@ -241,6 +241,7 @@ void CoreWrapper::onInit()
 
 	configPath_ = uReplaceChar(configPath_, '~', UDirectory::homeDir());
 	databasePath_ = uReplaceChar(databasePath_, '~', UDirectory::homeDir());
+#ifndef _WIN32
 	if(configPath_.size() && configPath_.at(0) != '/')
 	{
 		configPath_ = UDirectory::currentDir(true) + configPath_;
@@ -249,6 +250,7 @@ void CoreWrapper::onInit()
 	{
 		databasePath_ = UDirectory::currentDir(true) + databasePath_;
 	}
+#endif
 
 	ParametersMap allParameters = Parameters::getDefaultParameters();
 	// remove Odom parameters
@@ -322,7 +324,7 @@ void CoreWrapper::onInit()
 
 	//parse input arguments
 	std::vector<std::string> argList = getMyArgv();
-	char * argv[argList.size()];
+	char ** argv = new char*[argList.size()];
 	bool deleteDbOnStart = false;
 	for(unsigned int i=0; i<argList.size(); ++i)
 	{
@@ -333,6 +335,7 @@ void CoreWrapper::onInit()
 		}
 	}
 	rtabmap::ParametersMap parameters = rtabmap::Parameters::parseArguments(argList.size(), argv);
+	delete [] argv;
 	for(ParametersMap::const_iterator iter=parameters.begin(); iter!=parameters.end(); ++iter)
 	{
 		uInsert(parameters_, ParametersPair(iter->first, iter->second));
@@ -500,12 +503,6 @@ void CoreWrapper::onInit()
 	// Add all other parameters (not copied if already exists)
 	parameters_.insert(allParameters.begin(), allParameters.end());
 
-	// set public parameters
-	nh.setParam("is_rtabmap_paused", paused_);
-	for(ParametersMap::iterator iter=parameters_.begin(); iter!=parameters_.end(); ++iter)
-	{
-		nh.setParam(iter->first, iter->second);
-	}
 	if(parameters_.find(Parameters::kRtabmapDetectionRate()) != parameters_.end())
 	{
 		Parameters::parse(parameters_, Parameters::kRtabmapDetectionRate(), rate_);
@@ -611,6 +608,7 @@ void CoreWrapper::onInit()
 	cancelGoalSrv_ = nh.advertiseService("cancel_goal", &CoreWrapper::cancelGoalCallback, this);
 	setLabelSrv_ = nh.advertiseService("set_label", &CoreWrapper::setLabelCallback, this);
 	listLabelsSrv_ = nh.advertiseService("list_labels", &CoreWrapper::listLabelsCallback, this);
+	addLinkSrv_ = nh.advertiseService("add_link", &CoreWrapper::addLinkCallback, this);
 #ifdef WITH_OCTOMAP_MSGS
 #ifdef RTABMAP_OCTOMAP
 	octomapBinarySrv_ = nh.advertiseService("octomap_binary", &CoreWrapper::octomapBinaryCallback, this);
@@ -712,6 +710,13 @@ void CoreWrapper::onInit()
 		{
 			rtabmap_.parseParameters(parameters_);
 		}
+	}
+
+	// set public parameters
+	nh.setParam("is_rtabmap_paused", paused_);
+	for(ParametersMap::iterator iter=parameters_.begin(); iter!=parameters_.end(); ++iter)
+	{
+		nh.setParam(iter->first, iter->second);
 	}
 
 	userDataAsyncSub_ = nh.subscribe("user_data_async", 1, &CoreWrapper::userDataAsyncCallback, this);
@@ -3226,6 +3231,17 @@ bool CoreWrapper::listLabelsCallback(rtabmap_ros::ListLabels::Request& req, rtab
 		NODELET_INFO("List labels service: %d labels found.", (int)res.labels.size());
 	}
 	return true;
+}
+
+bool CoreWrapper::addLinkCallback(rtabmap_ros::AddLink::Request& req, rtabmap_ros::AddLink::Response&)
+{
+	if(rtabmap_.getMemory())
+	{
+		ROS_INFO("Adding external link %d -> %d", req.link.fromId, req.link.toId);
+		rtabmap_.addLink(linkFromROS(req.link));
+		return true;
+	}
+	return false;
 }
 
 void CoreWrapper::publishStats(const ros::Time & stamp)

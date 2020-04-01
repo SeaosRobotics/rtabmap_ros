@@ -204,6 +204,7 @@ void OdometryROS::onInit()
 
 
 	//parameters
+	ROS_INFO("Odometry: stereoParams_=%d visParams_=%d icpParams_=%d", stereoParams_?1:0, visParams_?1:0, icpParams_?1:0);
 	parameters_ = Parameters::getDefaultOdometryParameters(stereoParams_, visParams_, icpParams_);
 	if(icpParams_)
 	{
@@ -274,13 +275,14 @@ void OdometryROS::onInit()
 	}
 
 	std::vector<std::string> argList = getMyArgv();
-	char * argv[argList.size()];
+	char ** argv = new char*[argList.size()];
 	for(unsigned int i=0; i<argList.size(); ++i)
 	{
 		argv[i] = &argList[i].at(0);
 	}
 
 	rtabmap::ParametersMap parameters = rtabmap::Parameters::parseArguments(argList.size(), argv);
+	delete [] argv;
 	for(rtabmap::ParametersMap::iterator iter=parameters.begin(); iter!=parameters.end(); ++iter)
 	{
 		rtabmap::ParametersMap::iterator jter = parameters_.find(iter->first);
@@ -288,6 +290,10 @@ void OdometryROS::onInit()
 		{
 			NODELET_INFO( "Update odometry parameter \"%s\"=\"%s\" from arguments", iter->first.c_str(), iter->second.c_str());
 			jter->second = iter->second;
+		}
+		else
+		{
+			NODELET_INFO( "Odometry: Ignored parameter \"%s\"=\"%s\" from arguments", iter->first.c_str(), iter->second.c_str());
 		}
 	}
 
@@ -456,7 +462,7 @@ void OdometryROS::callbackIMU(const sensor_msgs::ImuConstPtr& msg)
 				if(imu.orientation()[0] != 0 || imu.orientation()[1] != 0 || imu.orientation()[2] != 0 || imu.orientation()[3] != 0)
 				{
 					Transform rotation(0,0,0, imu.orientation()[0], imu.orientation()[1], imu.orientation()[2], imu.orientation()[3]);
-					rotation = rotation * imu.localTransform().rotation().inverse();
+					rotation = imu.localTransform().rotation() * rotation * imu.localTransform().rotation().inverse();
 					this->reset(rotation);
 					float r,p,y;
 					rotation.getEulerAngles(r,p,y);
