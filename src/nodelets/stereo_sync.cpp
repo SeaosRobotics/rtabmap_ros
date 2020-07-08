@@ -124,7 +124,7 @@ private:
 		cameraInfoLeftSub_.subscribe(left_nh, "camera_info", 1);
 		cameraInfoRightSub_.subscribe(right_nh, "camera_info", 1);
 
-		std::string subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s,\n   %s,\n   %s,\n   %s",
+		std::string subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s \\\n   %s \\\n   %s \\\n   %s",
 							getName().c_str(),
 							approxSync?"approx":"exact",
 							imageLeftSub_.getTopic().c_str(),
@@ -172,8 +172,8 @@ private:
 			rtabmap_ros::RGBDImage msg;
 			msg.header.frame_id = cameraInfoLeft->header.frame_id;
 			msg.header.stamp = imageLeft->header.stamp>imageRight->header.stamp?imageLeft->header.stamp:imageRight->header.stamp;
-			msg.rgbCameraInfo = *cameraInfoLeft;
-			msg.depthCameraInfo = *cameraInfoRight;
+			msg.rgb_camera_info = *cameraInfoLeft;
+			msg.depth_camera_info = *cameraInfoRight;
 
 			if(rgbdImageCompressedPub_.getNumSubscribers())
 			{
@@ -194,10 +194,10 @@ private:
 					rtabmap_ros::RGBDImage msgCompressed = msg;
 
 					cv_bridge::CvImageConstPtr imagePtr = cv_bridge::toCvShare(imageLeft);
-					imagePtr->toCompressedImageMsg(msgCompressed.rgbCompressed, cv_bridge::JPG);
+					imagePtr->toCompressedImageMsg(msgCompressed.rgb_compressed, cv_bridge::JPG);
 
 					cv_bridge::CvImageConstPtr imageDepthPtr = cv_bridge::toCvShare(imageRight);
-					imageDepthPtr->toCompressedImageMsg(msgCompressed.depthCompressed, cv_bridge::JPG);
+					imageDepthPtr->toCompressedImageMsg(msgCompressed.depth_compressed, cv_bridge::JPG);
 
 					rgbdImageCompressedPub_.publish(msgCompressed);
 				}

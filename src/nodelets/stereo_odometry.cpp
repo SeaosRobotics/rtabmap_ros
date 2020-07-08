@@ -133,7 +133,7 @@ private:
 			}
 
 
-			subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s,\n   %s,\n   %s,\n   %s",
+			subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s \\\n   %s \\\n   %s \\\n   %s",
 					getName().c_str(),
 					approxSync?"approx":"exact",
 					imageRectLeft_.getTopic().c_str(),
@@ -294,7 +294,7 @@ private:
 			int quality = -1;
 			if(!imageRectLeft->image.empty() && !imageRectRight->image.empty())
 			{
-				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(image->rgbCameraInfo, image->depthCameraInfo, localTransform);
+				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(image->rgb_camera_info, image->depth_camera_info, localTransform);
 				if(stereoModel.baseline() <= 0)
 				{
 					NODELET_FATAL("The stereo baseline (%f) should be positive (baseline=-Tx/fx). We assume a horizontal left/right stereo "

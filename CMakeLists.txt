@@ -15,7 +15,7 @@ endif (POLICY CMP0042)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS 
+find_package(catkin REQUIRED COMPONENTS
              cv_bridge roscpp rospy sensor_msgs std_msgs std_srvs nav_msgs geometry_msgs visualization_msgs
              image_transport tf tf_conversions tf2_ros eigen_conversions laser_geometry pcl_conversions 
              pcl_ros nodelet dynamic_reconfigure message_filters class_loader rosgraph_msgs
@@ -31,7 +31,7 @@ find_package(find_object_2d)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-find_package(RTABMap 0.19.5 REQUIRED)
+find_package(RTABMap 0.20.2 REQUIRED)
 
 find_package(OpenCV REQUIRED)
 
@@ -46,11 +46,7 @@ IF(WIN32)
 add_compile_options(-bigobj)
 ENDIF(WIN32)
 
-IF(WIN32)
 option(RTABMAP_SYNC_MULTI_RGBD "Build with multi RGBD camera synchronization support"  OFF)
-ELSE()
-option(RTABMAP_SYNC_MULTI_RGBD "Build with multi RGBD camera synchronization support"  ON)
-ENDIF()
 option(RTABMAP_SYNC_USER_DATA "Build with input user data support"  OFF)
 MESSAGE(STATUS "RTABMAP_SYNC_MULTI_RGBD = ${RTABMAP_SYNC_MULTI_RGBD}")
 MESSAGE(STATUS "RTABMAP_SYNC_USER_DATA  = ${RTABMAP_SYNC_USER_DATA}")
@@ -96,6 +92,8 @@ add_message_files(
    FILES
    Info.msg
    KeyPoint.msg
+   GlobalDescriptor.msg
+   ScanDescriptor.msg
    MapData.msg
    MapGraph.msg
    NodeData.msg
@@ -114,6 +112,7 @@ add_message_files(
  add_service_files(
    FILES
    GetMap.srv
+   GetMap2.srv
    ListLabels.srv
    PublishMap.srv
    ResetPose.srv
@@ -121,6 +120,7 @@ add_message_files(
    SetLabel.srv
    GetPlan.srv
    AddLink.srv
+   GetNodeData.srv
  )
 
 ## Generate added messages and services with any dependencies listed here
@@ -386,6 +386,10 @@ add_executable(rtabmap_pointcloud_to_depthimage src/PointCloudToDepthImageNode.c
 target_link_libraries(rtabmap_pointcloud_to_depthimage ${Libraries})
 set_target_properties(rtabmap_pointcloud_to_depthimage PROPERTIES OUTPUT_NAME "pointcloud_to_depthimage")
 
+add_executable(rtabmap_point_cloud_assembler src/PointCloudAssemblerNode.cpp)
+target_link_libraries(rtabmap_point_cloud_assembler ${Libraries})
+set_target_properties(rtabmap_point_cloud_assembler PROPERTIES OUTPUT_NAME "point_cloud_assembler")
+
 # If rviz is found, add plugins
 IF(rviz_FOUND)
 
@@ -506,7 +510,7 @@ ENDIF(costmap_2d_FOUND)
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-install(PROGRAMS
+catkin_install_python(PROGRAMS
   scripts/patrol.py
   scripts/objects_to_tags.py
   scripts/point_to_tf.py
@@ -530,6 +534,7 @@ install(TARGETS
    rtabmap_data_player
    rtabmap_odom_msg_to_tf
    rtabmap_pointcloud_to_depthimage
+   rtabmap_point_cloud_assembler
    rtabmap_camera
    rtabmap_rgbd_sync
    rtabmap_rgbd_relay
