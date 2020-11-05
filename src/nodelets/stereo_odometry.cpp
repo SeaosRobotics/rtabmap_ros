@@ -38,7 +38,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/image_encodings.h>
-#include <sensor_msgs/Imu.h>
 
 #include <image_geometry/stereo_camera_model.h>
 
@@ -134,21 +133,13 @@ private:
 			}
 
 
-			subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s,\n   %s,\n   %s,\n   %s",
+			subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s \\\n   %s \\\n   %s \\\n   %s",
 					getName().c_str(),
 					approxSync?"approx":"exact",
 					imageRectLeft_.getTopic().c_str(),
 					imageRectRight_.getTopic().c_str(),
 					cameraInfoLeft_.getTopic().c_str(),
 					cameraInfoRight_.getTopic().c_str());
-		}
-
-		int odomStrategy = 0;
-		Parameters::parse(this->parameters(), Parameters::kOdomStrategy(), odomStrategy);
-		if(odomStrategy == Odometry::kTypeOkvis || odomStrategy == Odometry::kTypeMSCKF)
-		{
-			imuSub_ = nh.subscribe("imu", queueSize_*5, &StereoOdometry::callbackIMU, this);
-			NODELET_INFO("VIO approach selected, subscribing to IMU topic %s", imuSub_.getTopic().c_str());
 		}
 
 		this->startWarningThread(subscribedTopicsMsg, approxSync);
@@ -203,10 +194,57 @@ private:
 			int quality = -1;
 			if(imageRectLeft->data.size() && imageRectRight->data.size())
 			{
-				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(*cameraInfoLeft, *cameraInfoRight, localTransform);
-				if(stereoModel.baseline() <= 0)
+				bool alreadyRectified = true;
+				Parameters::parse(parameters(), Parameters::kRtabmapImagesAlreadyRectified(), alreadyRectified);
+				rtabmap::Transform stereoTransform;
+				if(!alreadyRectified)
 				{
-					NODELET_FATAL("The stereo baseline (%f) should be positive (baseline=-Tx/fx). We assume a horizontal left/right stereo "
+					stereoTransform = getTransform(
+							cameraInfoRight->header.frame_id,
+							cameraInfoLeft->header.frame_id,
+							cameraInfoLeft->header.stamp);
+					if(stereoTransform.isNull())
+					{
+						NODELET_ERROR("Parameter %s is false but we cannot get TF between the two cameras!", Parameters::kRtabmapImagesAlreadyRectified().c_str());
+						return;
+					}
+				}
+
+				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(*cameraInfoLeft, *cameraInfoRight, localTransform, stereoTransform);
+
+				if(stereoModel.baseline() == 0 && alreadyRectified)
+				{
+					stereoTransform = getTransform(
+							cameraInfoLeft->header.frame_id,
+							cameraInfoRight->header.frame_id,
+							cameraInfoLeft->header.stamp);
+
+					if(!stereoTransform.isNull() && stereoTransform.x()>0)
+					{
+						static bool warned = false;
+						if(!warned)
+						{
+							ROS_WARN("Right camera info doesn't have Tx set but we are assuming that stereo images are already rectified (see %s parameter). While not "
+									"recommended, we used TF to get the baseline (%s->%s = %fm) for convenience (e.g., D400 ir stereo issue). It is preferred to feed "
+									"a valid right camera info if stereo images are already rectified. This message is only printed once...",
+									rtabmap::Parameters::kRtabmapImagesAlreadyRectified().c_str(),
+									cameraInfoRight->header.frame_id.c_str(), cameraInfoLeft->header.frame_id.c_str(), stereoTransform.x());
+							warned = true;
+						}
+						stereoModel = rtabmap::StereoCameraModel(
+								stereoModel.left().fx(),
+								stereoModel.left().fy(),
+								stereoModel.left().cx(),
+								stereoModel.left().cy(),
+								stereoTransform.x(),
+								stereoModel.localTransform(),
+								stereoModel.left().imageSize());
+					}
+				}
+
+				if(alreadyRectified && stereoModel.baseline() <= 0)
+				{
+					NODELET_ERROR("The stereo baseline (%f) should be positive (baseline=-Tx/fx). We assume a horizontal left/right stereo "
 							  "setup where the Tx (or P(0,3)) is negative in the right camera info msg.", stereoModel.baseline());
 					return;
 				}
@@ -286,10 +324,57 @@ private:
 			int quality = -1;
 			if(!imageRectLeft->image.empty() && !imageRectRight->image.empty())
 			{
-				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(image->rgbCameraInfo, image->depthCameraInfo, localTransform);
-				if(stereoModel.baseline() <= 0)
+				bool alreadyRectified = true;
+				Parameters::parse(parameters(), Parameters::kRtabmapImagesAlreadyRectified(), alreadyRectified);
+				rtabmap::Transform stereoTransform;
+				if(!alreadyRectified)
 				{
-					NODELET_FATAL("The stereo baseline (%f) should be positive (baseline=-Tx/fx). We assume a horizontal left/right stereo "
+					stereoTransform = getTransform(
+							image->depth_camera_info.header.frame_id,
+							image->rgb_camera_info.header.frame_id,
+							image->rgb_camera_info.header.stamp);
+					if(stereoTransform.isNull())
+					{
+						NODELET_ERROR("Parameter %s is false but we cannot get TF between the two cameras!", Parameters::kRtabmapImagesAlreadyRectified().c_str());
+						return;
+					}
+				}
+
+				rtabmap::StereoCameraModel stereoModel = rtabmap_ros::stereoCameraModelFromROS(image->rgb_camera_info, image->depth_camera_info, localTransform);
+
+				if(stereoModel.baseline() == 0 && alreadyRectified)
+				{
+					stereoTransform = getTransform(
+							image->rgb_camera_info.header.frame_id,
+							image->depth_camera_info.header.frame_id,
+							image->rgb_camera_info.header.stamp);
+
+					if(!stereoTransform.isNull() && stereoTransform.x()>0)
+					{
+						static bool warned = false;
+						if(!warned)
+						{
+							ROS_WARN("Right camera info doesn't have Tx set but we are assuming that stereo images are already rectified (see %s parameter). While not "
+									"recommended, we used TF to get the baseline (%s->%s = %fm) for convenience (e.g., D400 ir stereo issue). It is preferred to feed "
+									"a valid right camera info if stereo images are already rectified. This message is only printed once...",
+									rtabmap::Parameters::kRtabmapImagesAlreadyRectified().c_str(),
+									image->depth_camera_info.header.frame_id.c_str(), image->rgb_camera_info.header.frame_id.c_str(), stereoTransform.x());
+							warned = true;
+						}
+						stereoModel = rtabmap::StereoCameraModel(
+								stereoModel.left().fx(),
+								stereoModel.left().fy(),
+								stereoModel.left().cx(),
+								stereoModel.left().cy(),
+								stereoTransform.x(),
+								stereoModel.localTransform(),
+								stereoModel.left().imageSize());
+					}
+				}
+
+				if(alreadyRectified && stereoModel.baseline() <= 0)
+				{
+					NODELET_ERROR("The stereo baseline (%f) should be positive (baseline=-Tx/fx). We assume a horizontal left/right stereo "
 							  "setup where the Tx (or P(0,3)) is negative in the right camera info msg.", stereoModel.baseline());
 					return;
 				}
@@ -329,36 +414,6 @@ private:
 		}
 	}
 
-	void callbackIMU(
-			const sensor_msgs::ImuConstPtr& msg)
-	{
-		if(!this->isPaused())
-		{
-			double stamp = msg->header.stamp.toSec();
-			rtabmap::Transform localTransform = rtabmap::Transform::getIdentity();
-			if(this->frameId().compare(msg->header.frame_id) != 0)
-			{
-				localTransform = getTransform(this->frameId(), msg->header.frame_id, msg->header.stamp);
-			}
-			if(localTransform.isNull())
-			{
-				ROS_ERROR("Could not transform IMU msg from frame \"%s\" to frame \"%s\", TF not available at time %f",
-						msg->header.frame_id.c_str(), this->frameId().c_str(), stamp);
-				return;
-			}
-
-			IMU imu(
-					cv::Vec3d(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
-					cv::Mat(3,3,CV_64FC1,(void*)msg->angular_velocity_covariance.data()).clone(),
-					cv::Vec3d(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z),
-					cv::Mat(3,3,CV_64FC1,(void*)msg->linear_acceleration_covariance.data()).clone(),
-					localTransform);
-
-			SensorData data(imu, 0, stamp);
-			this->processData(data, msg->header.stamp);
-		}
-	}
-
 protected:
 	virtual void flushCallbacks()
 	{
@@ -387,7 +442,6 @@ private:
 	typedef message_filters::sync_policies::ExactTime<sensor_msgs::Image, sensor_msgs::Image, sensor_msgs::CameraInfo, sensor_msgs::CameraInfo> MyExactSyncPolicy;
 	message_filters::Synchronizer<MyExactSyncPolicy> * exactSync_;
 	ros::Subscriber rgbdSub_;
-	ros::Subscriber imuSub_;
 	int queueSize_;
 };
 

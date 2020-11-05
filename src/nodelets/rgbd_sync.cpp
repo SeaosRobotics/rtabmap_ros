@@ -47,8 +47,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <boost/thread.hpp>
 
 #include "rtabmap_ros/RGBDImage.h"
+#include "rtabmap_ros/MsgConversion.h"
 
 #include "rtabmap/core/Compression.h"
+#include "rtabmap/core/util2d.h"
 #include "rtabmap/utilite/UConversion.h"
 
 namespace rtabmap_ros
@@ -59,6 +61,8 @@ class RGBDSync : public nodelet::Nodelet
 public:
 	RGBDSync() :
 		depthScale_(1.0),
+		decimation_(1),
+		compressedRate_(0),
 		warningThread_(0),
 		callbackCalled_(false),
 		approxSyncDepth_(0),
@@ -91,10 +95,19 @@ private:
 		pnh.param("approx_sync", approxSync, approxSync);
 		pnh.param("queue_size", queueSize, queueSize);
 		pnh.param("depth_scale", depthScale_, depthScale_);
+		pnh.param("decimation", decimation_, decimation_);
+		pnh.param("compressed_rate", compressedRate_, compressedRate_);
+
+		if(decimation_<1)
+		{
+			decimation_ = 1;
+		}
 
 		NODELET_INFO("%s: approx_sync = %s", getName().c_str(), approxSync?"true":"false");
 		NODELET_INFO("%s: queue_size  = %d", getName().c_str(), queueSize);
 		NODELET_INFO("%s: depth_scale = %f", getName().c_str(), depthScale_);
+		NODELET_INFO("%s: decimation = %d", getName().c_str(), decimation_);
+		NODELET_INFO("%s: compressed_rate = %f", getName().c_str(), compressedRate_);
 
 		rgbdImagePub_ = nh.advertise<rtabmap_ros::RGBDImage>("rgbd_image", 1);
 		rgbdImageCompressedPub_ = nh.advertise<rtabmap_ros::RGBDImage>("rgbd_image/compressed", 1);
@@ -123,7 +136,7 @@ private:
 		imageDepthSub_.subscribe(depth_it, depth_nh.resolveName("image"), 1, hintsDepth);
 		cameraInfoSub_.subscribe(rgb_nh, "camera_info", 1);
 
-		std::string subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s,\n   %s,\n   %s",
+		std::string subscribedTopicsMsg = uFormat("\n%s subscribed to (%s sync):\n   %s \\\n   %s \\\n   %s",
 							getName().c_str(),
 							approxSync?"approx":"exact",
 							imageSub_.getTopic().c_str(),
@@ -161,56 +174,126 @@ private:
 		callbackCalled_ = true;
 		if(rgbdImagePub_.getNumSubscribers() || rgbdImageCompressedPub_.getNumSubscribers())
 		{
+			double rgbStamp = image->header.stamp.toSec();
+			double depthStamp = depth->header.stamp.toSec();
+			double infoStamp = cameraInfo->header.stamp.toSec();
+
 			rtabmap_ros::RGBDImage msg;
 			msg.header.frame_id = cameraInfo->header.frame_id;
 			msg.header.stamp = image->header.stamp>depth->header.stamp?image->header.stamp:depth->header.stamp;
-			msg.rgbCameraInfo = *cameraInfo;
-			msg.depthCameraInfo = *cameraInfo;
+			if(decimation_>1 && !(depth->width % decimation_ == 0 && depth->height % decimation_ == 0))
+			{
+				ROS_WARN("Decimation of depth images should be exact (decimation=%d, size=(%d,%d))! "
+					   "Images won't be resized.", decimation_, depth->width, depth->height);
+				decimation_ = 1;
+			}
+			if(decimation_>1)
+			{
+				rtabmap::CameraModel model = rtabmap_ros::cameraModelFromROS(*cameraInfo);
+				sensor_msgs::CameraInfo info;
+				rtabmap_ros::cameraModelToROS(model.scaled(1.0f/float(decimation_)), info);
+				info.header = cameraInfo->header;
+				msg.rgb_camera_info = info;
+				msg.depth_camera_info = info;
+			}
+			else
+			{
+				msg.rgb_camera_info = *cameraInfo;
+				msg.depth_camera_info = *cameraInfo;
+			}
+
+			cv::Mat rgbMat;
+			cv::Mat depthMat;
+			cv_bridge::CvImageConstPtr imagePtr = cv_bridge::toCvShare(image);
+			cv_bridge::CvImageConstPtr imageDepthPtr = cv_bridge::toCvShare(depth);
+			rgbMat = imagePtr->image;
+			depthMat = imageDepthPtr->image;
+
+			if(decimation_>1)
+			{
+				rgbMat = rtabmap::util2d::decimate(rgbMat, decimation_);
+				depthMat = rtabmap::util2d::decimate(depthMat, decimation_);
+			}
+
+			if(depthScale_ != 1.0)
+			{
+				depthMat*=depthScale_;
+			}
 
 			if(rgbdImageCompressedPub_.getNumSubscribers())
 			{
-				rtabmap_ros::RGBDImage msgCompressed = msg;
-
-				cv_bridge::CvImageConstPtr imagePtr = cv_bridge::toCvShare(image);
-				imagePtr->toCompressedImageMsg(msgCompressed.rgbCompressed, cv_bridge::JPG);
-
-				cv_bridge::CvImageConstPtr imageDepthPtr = cv_bridge::toCvShare(depth);
-				msgCompressed.depthCompressed.header = imageDepthPtr->header;
-				if(depthScale_ != 1.0)
+				bool publishCompressed = true;
+				if (compressedRate_ > 0.0)
 				{
-					msgCompressed.depthCompressed.data = rtabmap::compressImage(imageDepthPtr->image*depthScale_, ".png");
+					if ( lastCompressedPublished_ + ros::Duration(1.0/compressedRate_) > ros::Time::now())
+					{
+						NODELET_DEBUG("throttle last update at %f skipping", lastCompressedPublished_.toSec());
+						publishCompressed = false;
+					}
 				}
-				else
-				{
-					msgCompressed.depthCompressed.data = rtabmap::compressImage(imageDepthPtr->image, ".png");
-				}
-				msgCompressed.depthCompressed.format = "png";
 
-				rgbdImageCompressedPub_.publish(msgCompressed);
+				if(publishCompressed)
+				{
+					lastCompressedPublished_ = ros::Time::now();
+
+					rtabmap_ros::RGBDImage msgCompressed;
+					msgCompressed.header = msg.header;
+					msgCompressed.rgb_camera_info = msg.rgb_camera_info;
+					msgCompressed.depth_camera_info = msg.depth_camera_info;
+
+					cv_bridge::CvImage cvImg;
+					cvImg.header = image->header;
+					cvImg.image = rgbMat;
+					cvImg.encoding = image->encoding;
+					cvImg.toCompressedImageMsg(msgCompressed.rgb_compressed, cv_bridge::JPG);
+
+					msgCompressed.depth_compressed.header = imageDepthPtr->header;
+					msgCompressed.depth_compressed.data = rtabmap::compressImage(depthMat, ".png");
+
+					msgCompressed.depth_compressed.format = "png";
+
+					rgbdImageCompressedPub_.publish(msgCompressed);
+				}
 			}
 
 			if(rgbdImagePub_.getNumSubscribers())
 			{
-				msg.rgb = *image;
-				if(depthScale_ != 1.0)
-				{
-					cv_bridge::CvImagePtr imageDepthPtr = cv_bridge::toCvCopy(depth);
-					imageDepthPtr->image*=depthScale_;
-					msg.depth = *imageDepthPtr->toImageMsg();
-				}
-				else
-				{
-					msg.depth = *depth;
-				}
+				cv_bridge::CvImage cvImg;
+				cvImg.header = image->header;
+				cvImg.image = rgbMat;
+				cvImg.encoding = image->encoding;
+				cvImg.toImageMsg(msg.rgb);
+
+				cv_bridge::CvImage cvDepth;
+				cvDepth.header = depth->header;
+				cvDepth.image = depthMat;
+				cvDepth.encoding = depth->encoding;
+				cvDepth.toImageMsg(msg.depth);
+
 				rgbdImagePub_.publish(msg);
+			}
+
+			if( rgbStamp != image->header.stamp.toSec() ||
+				depthStamp != depth->header.stamp.toSec())
+			{
+				NODELET_ERROR("Input stamps changed between the beginning and the end of the callback! Make "
+						"sure the node publishing the topics doesn't override the same data after publishing them. A "
+						"solution is to use this node within another nodelet manager. Stamps: "
+						"rgb=%f->%f depth=%f->%f",
+						rgbStamp, image->header.stamp.toSec(),
+						depthStamp, depth->header.stamp.toSec());
 			}
 		}
 	}
 
 private:
 	double depthScale_;
+	int decimation_;
+	double compressedRate_;
 	boost::thread * warningThread_;
 	bool callbackCalled_;
+
+	ros::Time lastCompressedPublished_;
 
 	ros::Publisher rgbdImagePub_;
 	ros::Publisher rgbdImageCompressedPub_;

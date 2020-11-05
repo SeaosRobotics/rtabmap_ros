@@ -90,8 +90,8 @@ private:
 	double mapFilterRadius_;
 	double mapFilterAngle_;
 	bool mapCacheCleanup_;
-	bool negativePosesIgnored_;
-	bool negativeScanEmptyRayTracing_;
+	bool alwaysUpdateMap_;
+	bool scanEmptyRayTracing_;
 
 	ros::Publisher cloudMapPub_;
 	ros::Publisher cloudGroundPub_;
@@ -103,6 +103,7 @@ private:
 	ros::Publisher octoMapPubBin_;
 	ros::Publisher octoMapPubFull_;
 	ros::Publisher octoMapCloud_;
+	ros::Publisher octoMapFrontierCloud_;
 	ros::Publisher octoMapGroundCloud_;
 	ros::Publisher octoMapObstacleCloud_;
 	ros::Publisher octoMapEmptySpace_;
@@ -123,11 +124,16 @@ private:
 	std::map<int, cv::Point3f> gridMapsViewpoints_;
 
 	rtabmap::OccupancyGrid * occupancyGrid_;
+	bool gridUpdated_;
 
 	rtabmap::OctoMap * octomap_;
 	int octomapTreeDepth_;
+	bool octomapUpdated_;
 
 	rtabmap::ParametersMap parameters_;
+
+	bool latching_;
+	std::map<void*, bool> latched_;
 };
 
 #endif /* MAPSMANAGER_H_ */

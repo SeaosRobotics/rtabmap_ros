@@ -86,6 +86,7 @@ void MapCloudDisplay::CloudInfo::clear()
 
 MapCloudDisplay::MapCloudDisplay()
   : spinner_(1, &cbqueue_),
+	lastCloudAdded_(-1),
     new_xyz_transformer_(false),
     new_color_transformer_(false),
     needs_retransform_(false),
@@ -130,6 +131,10 @@ MapCloudDisplay::MapCloudDisplay()
 													this, SLOT( updateColorTransformer() ), this );
 	connect( color_transformer_property_, SIGNAL( requestOptions( EnumProperty* )),
 			 this, SLOT( setColorTransformerOptions( EnumProperty* )));
+
+	cloud_from_scan_ = new rviz::BoolProperty( "Cloud from scan", false,
+										 "Create the cloud from laser scans instead of the RGB-D/Stereo images.",
+										 this, SLOT( updateCloudParameters() ), this );
 
 	cloud_decimation_ = new rviz::IntProperty( "Cloud decimation", 4,
 										 "Decimation of the input RGB and depth images before creating the cloud.",
@@ -269,24 +274,30 @@ void MapCloudDisplay::processMapData(const rtabmap_ros::MapData& map)
 	}
 
 	// Add new clouds...
+	bool fromDepth = !cloud_from_scan_->getBool();
 	for(unsigned int i=0; i<map.nodes.size() && i<map.nodes.size(); ++i)
 	{
 		int id = map.nodes[i].id;
 
 		// Always refresh the cloud if there are data
 		rtabmap::Signature s = rtabmap_ros::nodeDataFromROS(map.nodes[i]);
-		if(!s.sensorData().imageCompressed().empty() &&
-		   !s.sensorData().depthOrRightCompressed().empty() &&
-		   (s.sensorData().cameraModels().size() || s.sensorData().stereoCameraModel().isValidForProjection()))
+		if((fromDepth &&
+			!s.sensorData().imageCompressed().empty() &&
+		    !s.sensorData().depthOrRightCompressed().empty() &&
+		    (s.sensorData().cameraModels().size() || s.sensorData().stereoCameraModel().isValidForProjection())) ||
+		   (!fromDepth && !s.sensorData().laserScanCompressed().isEmpty()))
 		{
 			cv::Mat image, depth;
-			s.sensorData().uncompressData(&image, &depth, 0);
+			rtabmap::LaserScan scan;
 
+			s.sensorData().uncompressData(fromDepth?&image:0, fromDepth?&depth:0, !fromDepth?&scan:0);
 
-			if(!s.sensorData().imageRaw().empty() && !s.sensorData().depthOrRightRaw().empty())
+			sensor_msgs::PointCloud2::Ptr cloudMsg(new sensor_msgs::PointCloud2);
+			if(fromDepth && !s.sensorData().imageRaw().empty() && !s.sensorData().depthOrRightRaw().empty())
 			{
 				pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
 				pcl::IndicesPtr validIndices(new std::vector<int>);
+
 				cloud = rtabmap::util3d::cloudRGBFromSensorData(
 						s.sensorData(),
 						cloud_decimation_->getInt(),
@@ -294,13 +305,13 @@ void MapCloudDisplay::processMapData(const rtabmap_ros::MapData& map)
 						cloud_min_depth_->getFloat(),
 						validIndices.get());
 
-				if(cloud_voxel_size_->getFloat())
+				if(!cloud->empty())
 				{
-					cloud = rtabmap::util3d::voxelize(cloud, validIndices, cloud_voxel_size_->getFloat());
-				}
+					if(cloud_voxel_size_->getFloat())
+					{
+						cloud = rtabmap::util3d::voxelize(cloud, validIndices, cloud_voxel_size_->getFloat());
+					}
 
-				if(cloud->size())
-				{
 					if(cloud_filter_floor_height_->getFloat() > 0.0f || cloud_filter_ceiling_height_->getFloat() > 0.0f)
 					{
 						// convert in /odom frame
@@ -312,21 +323,52 @@ void MapCloudDisplay::processMapData(const rtabmap_ros::MapData& map)
 						cloud = rtabmap::util3d::transformPointCloud(cloud, s.getPose().inverse());
 					}
 
-					sensor_msgs::PointCloud2::Ptr cloudMsg(new sensor_msgs::PointCloud2);
-					pcl::toROSMsg(*cloud, *cloudMsg);
-					cloudMsg->header = map.header;
-
-					CloudInfoPtr info(new CloudInfo);
-					info->message_ = cloudMsg;
-					info->pose_ = rtabmap::Transform::getIdentity();
-					info->id_ = id;
-
-					if (transformCloud(info, true))
+					if(!cloud->empty())
 					{
-						boost::mutex::scoped_lock lock(new_clouds_mutex_);
-						new_cloud_infos_.erase(id);
-						new_cloud_infos_.insert(std::make_pair(id, info));
+						pcl::toROSMsg(*cloud, *cloudMsg);
 					}
+				}
+			}
+			else if(!fromDepth && !scan.isEmpty())
+			{
+				scan = rtabmap::util3d::commonFiltering(
+						scan,
+						1,
+						cloud_min_depth_->getFloat(),
+						cloud_max_depth_->getFloat(),
+						cloud_voxel_size_->getFloat());
+				pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+				cloud = rtabmap::util3d::laserScanToPointCloudI(scan, scan.localTransform());
+				if(cloud_filter_floor_height_->getFloat() > 0.0f || cloud_filter_ceiling_height_->getFloat() > 0.0f)
+				{
+					// convert in /odom frame
+					cloud = rtabmap::util3d::transformPointCloud(cloud, s.getPose());
+					cloud = rtabmap::util3d::passThrough(cloud, "z",
+							cloud_filter_floor_height_->getFloat()>0.0f?cloud_filter_floor_height_->getFloat():-999.0f,
+							cloud_filter_ceiling_height_->getFloat()>0.0f && (cloud_filter_floor_height_->getFloat()<=0.0f || cloud_filter_ceiling_height_->getFloat()>cloud_filter_floor_height_->getFloat())?cloud_filter_ceiling_height_->getFloat():999.0f);
+					// convert back in /base_link frame
+					cloud = rtabmap::util3d::transformPointCloud(cloud, s.getPose().inverse());
+				}
+
+				if(!cloud->empty())
+				{
+					pcl::toROSMsg(*cloud, *cloudMsg);
+				}
+			}
+
+			if(!cloudMsg->data.empty())
+			{
+				cloudMsg->header = map.header;
+				CloudInfoPtr info(new CloudInfo);
+				info->message_ = cloudMsg;
+				info->pose_ = rtabmap::Transform::getIdentity();
+				info->id_ = id;
+
+				if (transformCloud(info, true))
+				{
+					boost::mutex::scoped_lock lock(new_clouds_mutex_);
+					new_cloud_infos_.erase(id);
+					new_cloud_infos_.insert(std::make_pair(id, info));
 				}
 			}
 		}
@@ -368,6 +410,7 @@ void MapCloudDisplay::updateTransformers( const sensor_msgs::PointCloud2ConstPtr
 	bool cur_xyz_valid = false;
 	bool cur_color_valid = false;
 	bool has_rgb_transformer = false;
+	bool has_intensity_transformer = false;
 	M_TransformerInfo::iterator trans_it = transformers_.begin();
 	M_TransformerInfo::iterator trans_end = transformers_.end();
 	for(;trans_it != trans_end; ++trans_it)
@@ -396,6 +439,10 @@ void MapCloudDisplay::updateTransformers( const sensor_msgs::PointCloud2ConstPtr
 			{
 				has_rgb_transformer = true;
 			}
+			else if (name == "Intensity")
+			{
+				has_intensity_transformer = true;
+			}
 			color_transformer_property_->addOptionStd( name );
 		}
 	}
@@ -415,6 +462,10 @@ void MapCloudDisplay::updateTransformers( const sensor_msgs::PointCloud2ConstPtr
 			if (has_rgb_transformer)
 			{
 				color_transformer_property_->setStringStd( "RGB8" );
+			}
+			else if (has_intensity_transformer)
+			{
+				color_transformer_property_->setStringStd( "Intensity" );
 			}
 			else
 			{
@@ -598,6 +649,8 @@ void MapCloudDisplay::update( float wall_dt, float ros_dt )
 {
 	rviz::PointCloud::RenderMode mode = (rviz::PointCloud::RenderMode) style_property_->getOptionInt();
 
+	int lastCloudAdded = -1;
+
 	if (needs_retransform_)
 	{
 		retransform();
@@ -637,6 +690,7 @@ void MapCloudDisplay::update( float wall_dt, float ros_dt )
 
 				cloud_infos_.erase(it->first);
 				cloud_infos_.insert(*it);
+				lastCloudAdded = it->first;
 			}
 
 			new_cloud_infos_.clear();
@@ -711,14 +765,32 @@ void MapCloudDisplay::update( float wall_dt, float ros_dt )
 				}
 			}
 			//hide not used clouds
-			for(std::map<int, CloudInfoPtr>::iterator iter = cloud_infos_.begin(); iter!=cloud_infos_.end(); ++iter)
+			for(std::map<int, CloudInfoPtr>::iterator iter = cloud_infos_.begin(); iter!=cloud_infos_.end();)
 			{
 				if(current_map_.find(iter->first) == current_map_.end())
 				{
-					iter->second->scene_node_->setVisible(false);
+					if(iter->first == lastCloudAdded_)
+					{
+						// remove from cache, the node has been discarded
+						cloud_infos_.erase(iter++);
+						lastCloudAdded_ = -1;
+					}
+					else
+					{
+						iter->second->scene_node_->setVisible(false);
+						++iter;
+					}
+				}
+				else
+				{
+					++iter;
 				}
 			}
 		}
+	}
+	if(lastCloudAdded>0)
+	{
+		lastCloudAdded_ = lastCloudAdded;
 	}
 
 	this->setStatusStd(rviz::StatusProperty::Ok, "Points", tr("%1").arg(totalPoints).toStdString());
@@ -727,6 +799,7 @@ void MapCloudDisplay::update( float wall_dt, float ros_dt )
 
 void MapCloudDisplay::reset()
 {
+	lastCloudAdded_ = -1;
 	{
 		boost::mutex::scoped_lock lock(new_clouds_mutex_);
 		cloud_infos_.clear();

@@ -32,9 +32,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <tf/transform_listener.h>
 #include <geometry_msgs/Transform.h>
 #include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/Image.h>
+#include <sensor_msgs/PointCloud2.h>
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d/features2d.hpp>
@@ -68,7 +70,7 @@ void transformToGeometryMsg(const rtabmap::Transform & transform, geometry_msgs:
 rtabmap::Transform transformFromGeometryMsg(const geometry_msgs::Transform & msg);
 
 void transformToPoseMsg(const rtabmap::Transform & transform, geometry_msgs::Pose & msg);
-rtabmap::Transform transformFromPoseMsg(const geometry_msgs::Pose & msg);
+rtabmap::Transform transformFromPoseMsg(const geometry_msgs::Pose & msg, bool ignoreRotationIfNotSet = false);
 
 void toCvCopy(const rtabmap_ros::RGBDImage & image, cv_bridge::CvImagePtr & rgb, cv_bridge::CvImagePtr & depth);
 void toCvShare(const rtabmap_ros::RGBDImageConstPtr & image, cv_bridge::CvImageConstPtr & rgb, cv_bridge::CvImageConstPtr & depth);
@@ -90,6 +92,17 @@ void keypointToROS(const cv::KeyPoint & kpt, rtabmap_ros::KeyPoint & msg);
 std::vector<cv::KeyPoint> keypointsFromROS(const std::vector<rtabmap_ros::KeyPoint> & msg);
 void keypointsToROS(const std::vector<cv::KeyPoint> & kpts, std::vector<rtabmap_ros::KeyPoint> & msg);
 
+rtabmap::GlobalDescriptor globalDescriptorFromROS(const rtabmap_ros::GlobalDescriptor & msg);
+void globalDescriptorToROS(const rtabmap::GlobalDescriptor & desc, rtabmap_ros::GlobalDescriptor & msg);
+
+std::vector<rtabmap::GlobalDescriptor> globalDescriptorsFromROS(const std::vector<rtabmap_ros::GlobalDescriptor> & msg);
+void globalDescriptorsToROS(const std::vector<rtabmap::GlobalDescriptor> & desc, std::vector<rtabmap_ros::GlobalDescriptor> & msg);
+
+rtabmap::EnvSensor envSensorFromROS(const rtabmap_ros::EnvSensor & msg);
+void envSensorToROS(const rtabmap::EnvSensor & sensor, rtabmap_ros::EnvSensor & msg);
+rtabmap::EnvSensors envSensorsFromROS(const std::vector<rtabmap_ros::EnvSensor> & msg);
+void envSensorsToROS(const rtabmap::EnvSensors & sensors, std::vector<rtabmap_ros::EnvSensor> & msg);
+
 cv::Point2f point2fFromROS(const rtabmap_ros::Point2f & msg);
 void point2fToROS(const cv::Point2f & kpt, rtabmap_ros::Point2f & msg);
 
@@ -97,10 +110,10 @@ std::vector<cv::Point2f> points2fFromROS(const std::vector<rtabmap_ros::Point2f>
 void points2fToROS(const std::vector<cv::Point2f> & kpts, std::vector<rtabmap_ros::Point2f> & msg);
 
 cv::Point3f point3fFromROS(const rtabmap_ros::Point3f & msg);
-void point3fToROS(const cv::Point3f & kpt, rtabmap_ros::Point3f & msg);
+void point3fToROS(const cv::Point3f & pt, rtabmap_ros::Point3f & msg);
 
 std::vector<cv::Point3f> points3fFromROS(const std::vector<rtabmap_ros::Point3f> & msg);
-void points3fToROS(const std::vector<cv::Point3f> & kpts, std::vector<rtabmap_ros::Point3f> & msg);
+void points3fToROS(const std::vector<cv::Point3f> & pts, std::vector<rtabmap_ros::Point3f> & msg);
 
 rtabmap::CameraModel cameraModelFromROS(
 		const sensor_msgs::CameraInfo & camInfo,
@@ -112,7 +125,14 @@ void cameraModelToROS(
 rtabmap::StereoCameraModel stereoCameraModelFromROS(
 		const sensor_msgs::CameraInfo & leftCamInfo,
 		const sensor_msgs::CameraInfo & rightCamInfo,
-		const rtabmap::Transform & localTransform = rtabmap::Transform::getIdentity());
+		const rtabmap::Transform & localTransform = rtabmap::Transform::getIdentity(),
+		const rtabmap::Transform & stereoTransform = rtabmap::Transform());
+rtabmap::StereoCameraModel stereoCameraModelFromROS(
+		const sensor_msgs::CameraInfo & leftCamInfo,
+		const sensor_msgs::CameraInfo & rightCamInfo,
+		const std::string & frameId,
+		tf::TransformListener & listener,
+		double waitForTransform);
 
 void mapDataFromROS(
 		const rtabmap_ros::MapData & msg,
@@ -144,11 +164,22 @@ void nodeDataToROS(const rtabmap::Signature & signature, rtabmap_ros::NodeData &
 rtabmap::Signature nodeInfoFromROS(const rtabmap_ros::NodeData & msg);
 void nodeInfoToROS(const rtabmap::Signature & signature, rtabmap_ros::NodeData & msg);
 
+std::map<std::string, float> odomInfoToStatistics(const rtabmap::OdometryInfo & info);
 rtabmap::OdometryInfo odomInfoFromROS(const rtabmap_ros::OdomInfo & msg);
 void odomInfoToROS(const rtabmap::OdometryInfo & info, rtabmap_ros::OdomInfo & msg);
 
 cv::Mat userDataFromROS(const rtabmap_ros::UserData & dataMsg);
 void userDataToROS(const cv::Mat & data, rtabmap_ros::UserData & dataMsg, bool compress);
+
+rtabmap::Landmarks landmarksFromROS(
+		const std::map<int, geometry_msgs::PoseWithCovarianceStamped> & tags,
+		const std::string & frameId,
+		const std::string & odomFrameId,
+		const ros::Time & odomStamp,
+		tf::TransformListener & listener,
+		double waitForTransform,
+		double defaultLinVariance,
+		double defaultAngVariance);
 
 inline double timestampFromROS(const ros::Time & stamp) {return double(stamp.sec) + double(stamp.nsec)/1000000000.0;}
 
@@ -196,27 +227,29 @@ bool convertStereoMsg(
 		cv::Mat & right,
 		rtabmap::StereoCameraModel & stereoModel,
 		tf::TransformListener & listener,
-		double waitForTransform);
+		double waitForTransform,
+		bool alreadyRectified);
 
 bool convertScanMsg(
-		const sensor_msgs::LaserScanConstPtr& scan2dMsg,
+		const sensor_msgs::LaserScan & scan2dMsg,
 		const std::string & frameId,
 		const std::string & odomFrameId,
 		const ros::Time & odomStamp,
-		cv::Mat & scan,
-		rtabmap::Transform & scanLocalTransform,
+		rtabmap::LaserScan & scan,
 		tf::TransformListener & listener,
-		double waitForTransform);
+		double waitForTransform,
+		bool outputInFrameId = false);
 
 bool convertScan3dMsg(
-		const sensor_msgs::PointCloud2ConstPtr & scan3dMsg,
+		const sensor_msgs::PointCloud2 & scan3dMsg,
 		const std::string & frameId,
 		const std::string & odomFrameId,
 		const ros::Time & odomStamp,
-		cv::Mat & scan,
-		rtabmap::Transform & scanLocalTransform,
+		rtabmap::LaserScan & scan,
 		tf::TransformListener & listener,
-		double waitForTransform);
+		double waitForTransform,
+		int maxPoints = 0,
+		float maxRange = 0.0f);
 
 }
 

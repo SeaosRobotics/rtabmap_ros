@@ -40,6 +40,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pluginlib/class_loader.h>
 #include <sensor_msgs/PointCloud2.h>
 
+#include <ros/callback_queue.h>
+
 #include <rviz/ogre_helpers/point_cloud.h>
 #include <rviz/message_filter_display.h>
 #include <rviz/default_plugin/point_cloud_transformer.h>
@@ -108,6 +110,7 @@ public:
 	rviz::EnumProperty* xyz_transformer_property_;
 	rviz::EnumProperty* color_transformer_property_;
 	rviz::EnumProperty* style_property_;
+	rviz::BoolProperty* cloud_from_scan_;
 	rviz::IntProperty* cloud_decimation_;
 	rviz::FloatProperty* cloud_max_depth_;
 	rviz::FloatProperty* cloud_min_depth_;
@@ -170,6 +173,8 @@ private:
 
 	std::map<int, rtabmap::Transform> current_map_;
 	boost::mutex current_map_mutex_;
+
+	int lastCloudAdded_;
 
 	struct TransformerInfo
 	{

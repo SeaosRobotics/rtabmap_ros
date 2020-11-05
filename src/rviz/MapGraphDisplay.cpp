@@ -59,6 +59,8 @@ MapGraphDisplay::MapGraphDisplay()
 	                                       "Color to draw global loop closure links.", this );
 	color_local_property_ = new rviz::ColorProperty( "Local loop closure", Qt::yellow,
 	                                       "Color to draw local loop closure links.", this );
+	color_landmark_property_ = new rviz::ColorProperty( "Landmark", Qt::darkGreen,
+	                                       "Color to draw landmark links.", this );
 	color_user_property_ = new rviz::ColorProperty( "User", Qt::red,
 	                                       "Color to draw user links.", this );
 	color_virtual_property_ = new rviz::ColorProperty( "Virtual", Qt::magenta,
@@ -131,7 +133,7 @@ void MapGraphDisplay::processMessage( const rtabmap_ros::MapGraph::ConstPtr& msg
 
 		manual_object->estimateVertexCount(links.size() * 2);
 		manual_object->begin( "BaseWhiteNoLighting", Ogre::RenderOperation::OT_LINE_LIST );
-		for(std::map<int, rtabmap::Link>::iterator iter=links.begin(); iter!=links.end(); ++iter)
+		for(std::multimap<int, rtabmap::Link>::iterator iter=links.begin(); iter!=links.end(); ++iter)
 		{
 			std::map<int, rtabmap::Transform>::iterator poseIterFrom = poses.find(iter->second.from());
 			std::map<int, rtabmap::Transform>::iterator poseIterTo = poses.find(iter->second.to());
@@ -156,6 +158,10 @@ void MapGraphDisplay::processMessage( const rtabmap_ros::MapGraph::ConstPtr& msg
 				else if(iter->second.type() == rtabmap::Link::kLocalSpaceClosure || iter->second.type() == rtabmap::Link::kLocalTimeClosure)
 				{
 					color = color_local_property_->getOgreColor();
+				}
+				else if(iter->second.type() == rtabmap::Link::kLandmark)
+				{
+					color = color_landmark_property_->getOgreColor();
 				}
 				else
 				{
