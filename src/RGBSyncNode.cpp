@@ -25,67 +25,23 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "ros/ros.h"
+#include "nodelet/loader.h"
 
-#ifndef MAP_GRAPH_DISPLAY_H
-#define MAP_GRAPH_DISPLAY_H
-
-#include <rtabmap_ros/MapGraph.h>
-
-#include <rviz/message_filter_display.h>
-
-namespace Ogre
+int main(int argc, char **argv)
 {
-class ManualObject;
+	ros::init(argc, argv, "rgb_sync");
+
+	nodelet::V_string nargv;
+	for(int i=1;i<argc;++i)
+	{
+		nargv.push_back(argv[i]);
+	}
+
+	nodelet::Loader nodelet;
+	nodelet::M_string remap(ros::names::getRemappings());
+	std::string nodelet_name = ros::this_node::getName();
+	nodelet.load(nodelet_name, "rtabmap_ros/rgb_sync", remap, nargv);
+	ros::spin();
+	return 0;
 }
-
-namespace rviz
-{
-class ColorProperty;
-class FloatProperty;
-}
-
-using namespace rviz;
-
-namespace rtabmap_ros
-{
-
-/**
- * \class MapGraphDisplay
- * \brief Displays the graph of rtabmap::MapGraph message
- */
-class MapGraphDisplay: public MessageFilterDisplay<rtabmap_ros::MapGraph>
-{
-Q_OBJECT
-public:
-  MapGraphDisplay();
-  virtual ~MapGraphDisplay();
-
-  /** @brief Overridden from Display. */
-  virtual void reset();
-
-protected:
-  /** @brief Overridden from Display. */
-  virtual void onInitialize();
-
-  /** @brief Overridden from MessageFilterDisplay. */
-  void processMessage( const rtabmap_ros::MapGraph::ConstPtr& msg );
-
-private:
-  void destroyObjects();
-
-  std::vector<Ogre::ManualObject*> manual_objects_;
-
-  ColorProperty* color_neighbor_property_;
-  ColorProperty* color_neighbor_merged_property_;
-  ColorProperty* color_global_property_;
-  ColorProperty* color_local_property_;
-  ColorProperty* color_landmark_property_;
-  ColorProperty* color_user_property_;
-  ColorProperty* color_virtual_property_;
-  FloatProperty* alpha_property_;
-};
-
-} // namespace rtabmap_ros
-
-#endif /* MAP_GRAPH_DISPLAY_H */
-

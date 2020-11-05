@@ -145,11 +145,6 @@ void toCvCopy(const rtabmap_ros::RGBDImage & image, cv_bridge::CvImagePtr & rgb,
 		rgb = cv_bridge::toCvCopy(image.rgb_compressed);
 #endif
 	}
-	else
-	{
-		// empty
-		rgb = boost::make_shared<cv_bridge::CvImage>();
-	}
 
 	if(!image.depth.data.empty())
 	{
@@ -163,11 +158,6 @@ void toCvCopy(const rtabmap_ros::RGBDImage & image, cv_bridge::CvImagePtr & rgb,
 		ROS_ASSERT(ptr->image.empty() || ptr->image.type() == CV_32FC1 || ptr->image.type() == CV_16UC1);
 		ptr->encoding = ptr->image.empty()?"":ptr->image.type() == CV_32FC1?sensor_msgs::image_encodings::TYPE_32FC1:sensor_msgs::image_encodings::TYPE_16UC1;
 		depth = ptr;
-	}
-	else
-	{
-		// empty
-		depth = boost::make_shared<cv_bridge::CvImage>();
 	}
 }
 
@@ -184,11 +174,6 @@ void toCvShare(const rtabmap_ros::RGBDImageConstPtr & image, cv_bridge::CvImageC
 #else
 		rgb = cv_bridge::toCvCopy(image->rgb_compressed);
 #endif
-	}
-	else
-	{
-		// empty
-		rgb = boost::make_shared<cv_bridge::CvImage>();
 	}
 
 	if(!image->depth.data.empty())
@@ -214,11 +199,6 @@ void toCvShare(const rtabmap_ros::RGBDImageConstPtr & image, cv_bridge::CvImageC
 			ptr->encoding = ptr->image.empty()?"":ptr->image.type() == CV_32FC1?sensor_msgs::image_encodings::TYPE_32FC1:sensor_msgs::image_encodings::TYPE_16UC1;
 			depth = ptr;
 		}
-	}
-	else
-	{
-		// empty
-		depth = boost::make_shared<cv_bridge::CvImage>();
 	}
 }
 
@@ -445,6 +425,7 @@ void infoToROS(const rtabmap::Statistics & stats, rtabmap_ros::Info & info)
 	info.refId = stats.refImageId();
 	info.loopClosureId = stats.loopClosureId();
 	info.proximityDetectionId = stats.proximityDetectionId();
+	info.landmarkId =  static_cast<int>(uValue(stats.data(), rtabmap::Statistics::kLoopLandmark_detected(), 0.0f));
 
 	rtabmap_ros::transformToGeometryMsg(stats.loopClosureTransform(), info.loopClosureTransform);
 
@@ -562,6 +543,46 @@ void globalDescriptorsToROS(const std::vector<rtabmap::GlobalDescriptor> & desc,
 		for(unsigned int i=0; i<msg.size(); ++i)
 		{
 			globalDescriptorToROS(desc[i], msg[i]);
+		}
+	}
+}
+
+rtabmap::EnvSensor envSensorFromROS(const rtabmap_ros::EnvSensor & msg)
+{
+	return rtabmap::EnvSensor((rtabmap::EnvSensor::Type)msg.type, msg.value, timestampFromROS(msg.header.stamp));
+}
+
+void envSensorToROS(const rtabmap::EnvSensor & sensor, rtabmap_ros::EnvSensor & msg)
+{
+	msg.type = sensor.type();
+	msg.value = sensor.value();
+	msg.header.stamp = ros::Time(sensor.stamp());
+}
+
+rtabmap::EnvSensors envSensorsFromROS(const std::vector<rtabmap_ros::EnvSensor> & msg)
+{
+	rtabmap::EnvSensors v;
+	if(!msg.empty())
+	{
+		for(unsigned int i=0; i<msg.size(); ++i)
+		{
+			rtabmap::EnvSensor s = envSensorFromROS(msg[i]);
+			v.insert(std::make_pair(s.type(), envSensorFromROS(msg[i])));
+		}
+	}
+	return v;
+}
+
+void envSensorsToROS(const rtabmap::EnvSensors & sensors, std::vector<rtabmap_ros::EnvSensor> & msg)
+{
+	msg.clear();
+	if(!sensors.empty())
+	{
+		msg.resize(sensors.size());
+		int i=0;
+		for(rtabmap::EnvSensors::const_iterator iter=sensors.begin(); iter!=sensors.end(); ++iter)
+		{
+			envSensorToROS(iter->second, msg[i++]);
 		}
 	}
 }
@@ -879,29 +900,37 @@ void mapGraphToROS(
 rtabmap::Signature nodeDataFromROS(const rtabmap_ros::NodeData & msg)
 {
 	//Features stuff...
-	std::multimap<int, cv::KeyPoint> words;
-	std::multimap<int, cv::Point3f> words3D;
-	std::multimap<int, cv::Mat> wordsDescriptors;
-	cv::Mat descriptors = rtabmap::uncompressData(msg.wordDescriptors);
+	std::multimap<int, int> words;
+	std::vector<cv::KeyPoint> wordsKpts;
+	std::vector<cv::Point3f> words3D;
+	cv::Mat wordsDescriptors = rtabmap::uncompressData(msg.wordDescriptors);
 
-	for(unsigned int i=0; i<msg.wordIds.size() && i<msg.wordKpts.size(); ++i)
+	if(!msg.wordKpts.empty() && msg.wordKpts.size() != msg.wordIds.size())
 	{
-		cv::KeyPoint pt = keypointFromROS(msg.wordKpts.at(i));
-		int wordId = msg.wordIds.at(i);
-		words.insert(std::make_pair(wordId, pt));
-		if(i< msg.wordPts.size())
-		{
-			words3D.insert(std::make_pair(wordId, point3fFromROS(msg.wordPts[i])));
-		}
-		if(i < descriptors.rows)
-		{
-			wordsDescriptors.insert(std::make_pair(wordId, descriptors.row(i).clone()));
-		}
+		ROS_ERROR("Word IDs and 2D keypoints should be the same size (%d, %d)!", (int)msg.wordIds.size(), (int)msg.wordKpts.size());
+	}
+	if(!msg.wordPts.empty() && msg.wordPts.size() != msg.wordIds.size())
+	{
+		ROS_ERROR("Word IDs and 3D points should be the same size (%d, %d)!", (int)msg.wordIds.size(), (int)msg.wordPts.size());
+	}
+	if(wordsDescriptors.rows != (int)msg.wordIds.size())
+	{
+		ROS_ERROR("Word IDs and descriptors should be the same size (%d, %d)!", (int)msg.wordIds.size(), wordsDescriptors.rows);
+		wordsDescriptors = cv::Mat();
 	}
 
-	if(words3D.size() && words3D.size() != words.size())
+	for(unsigned int i=0; i<msg.wordIds.size(); ++i)
 	{
-		ROS_ERROR("Words 2D and 3D should be the same size (%d, %d)!", (int)words.size(), (int)words3D.size());
+		words.insert(std::make_pair(msg.wordIds.at(i), words.size())); // ID to index
+		if(msg.wordIds.size() == msg.wordKpts.size())
+		{
+			cv::KeyPoint pt = keypointFromROS(msg.wordKpts.at(i));
+			wordsKpts.push_back(pt);
+		}
+		if(msg.wordIds.size() == msg.wordPts.size())
+		{
+			words3D.push_back(point3fFromROS(msg.wordPts[i]));
+		}
 	}
 
 	rtabmap::StereoCameraModel stereoModel;
@@ -990,10 +1019,9 @@ rtabmap::Signature nodeDataFromROS(const rtabmap_ros::NodeData & msg)
 					msg.id,
 					msg.stamp,
 					compressedMatFromBytes(msg.userData)));
-	s.setWords(words);
-	s.setWords3(words3D);
-	s.setWordsDescriptors(wordsDescriptors);
+	s.setWords(words, wordsKpts, words3D, wordsDescriptors);
 	s.sensorData().setGlobalDescriptors(rtabmap_ros::globalDescriptorsFromROS(msg.globalDescriptors));
+	s.sensorData().setEnvSensors(rtabmap_ros::envSensorsFromROS(msg.env_sensors));
 	s.sensorData().setOccupancyGrid(
 			compressedMatFromBytes(msg.grid_ground),
 			compressedMatFromBytes(msg.grid_obstacles),
@@ -1068,70 +1096,60 @@ void nodeDataToROS(const rtabmap::Signature & signature, rtabmap_ros::NodeData &
 
 	//Features stuff...
 	msg.wordIds = uKeys(signature.getWords());
-	msg.wordKpts.resize(signature.getWords().size());
-	int index = 0;
-	for(std::multimap<int, cv::KeyPoint>::const_iterator jter=signature.getWords().begin();
-		jter!=signature.getWords().end();
-		++jter)
+	if(!signature.getWordsKpts().empty())
 	{
-		keypointToROS(jter->second, msg.wordKpts.at(index++));
-	}
-
-	if(signature.getWords3().size() && signature.getWords3().size() == signature.getWords().size())
-	{
-		msg.wordPts.resize(signature.getWords3().size());
-		int i=0;
-		for(std::multimap<int, cv::Point3f>::const_iterator jter=signature.getWords3().begin();
-			jter!=signature.getWords3().end();
-			++jter)
+		if(msg.wordIds.size() == signature.getWordsKpts().size())
 		{
-			point3fToROS(jter->second, msg.wordPts[i++]);
+			msg.wordKpts.resize(signature.getWordsKpts().size());
+		}
+		else
+		{
+			ROS_ERROR("Word IDs and 2D keypoints must have the same size (%d vs %d)!",
+					(int)signature.getWords().size(),
+					(int)signature.getWordsKpts().size());
 		}
 	}
-	else if(signature.getWords3().size())
-	{
-		ROS_ERROR("Words 2D and words 3D must have the same size (%d vs %d)!",
-				(int)signature.getWords().size(),
-				(int)signature.getWords3().size());
-	}
 
-	if(signature.getWordsDescriptors().size() && signature.getWordsDescriptors().size() == signature.getWords().size())
+	if(!signature.getWords3().empty())
 	{
-		cv::Mat descriptors(
-				signature.getWordsDescriptors().size(),
-				signature.getWordsDescriptors().begin()->second.cols,
-				signature.getWordsDescriptors().begin()->second.type());
-		index = 0;
-		bool valid = true;
-		for(std::multimap<int, cv::Mat>::const_iterator jter=signature.getWordsDescriptors().begin();
-			jter!=signature.getWordsDescriptors().end() && valid;
-			++jter)
+		if(msg.wordIds.size() == signature.getWords3().size())
 		{
-			if(jter->second.cols == descriptors.cols &&
-				jter->second.type() == descriptors.type())
-			{
-				jter->second.copyTo(descriptors.row(index++));
-			}
-			else
-			{
-				valid = false;
-				ROS_ERROR("Some descriptors have different type/size! Cannot copy them...");
-			}
+			msg.wordPts.resize(signature.getWords3().size());
 		}
-
-		if(valid)
+		else
 		{
-			msg.wordDescriptors = rtabmap::compressData(descriptors);
+			ROS_ERROR("Word IDs and 3D points must have the same size (%d vs %d)!",
+					(int)signature.getWords().size(),
+					(int)signature.getWords3().size());
 		}
 	}
-	else if(signature.getWordsDescriptors().size())
+	if(!msg.wordKpts.empty() || !msg.wordPts.empty())
 	{
-		ROS_ERROR("Words and descriptors must have the same size (%d vs %d)!",
-				(int)signature.getWords().size(),
-				(int)signature.getWordsDescriptors().size());
+		for(size_t i=0; i<msg.wordIds.size(); ++i)
+		{
+			if(!msg.wordKpts.empty())
+				keypointToROS(signature.getWordsKpts().at(i), msg.wordKpts.at(i));
+			if(!msg.wordPts.empty())
+				point3fToROS(signature.getWords3().at(i), msg.wordPts[i]);
+		}
+	}
+
+	if(!signature.getWordsDescriptors().empty())
+	{
+		if(signature.getWordsDescriptors().rows == (int)signature.getWords().size())
+		{
+			msg.wordDescriptors = rtabmap::compressData(signature.getWordsDescriptors());
+		}
+		else
+		{
+			ROS_ERROR("Word IDs and descriptors must have the same size (%d vs %d)!",
+					(int)signature.getWords().size(),
+					signature.getWordsDescriptors().rows);
+		}
 	}
 
 	rtabmap_ros::globalDescriptorsToROS(signature.sensorData().globalDescriptors(), msg.globalDescriptors);
+	rtabmap_ros::envSensorsToROS(signature.sensorData().envSensors(), msg.env_sensors);
 }
 
 rtabmap::Signature nodeInfoFromROS(const rtabmap_ros::NodeData & msg)
@@ -1588,7 +1606,8 @@ bool convertRGBDMsgs(
 			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::RGB8) == 0 ||
 			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::BGRA8) == 0 ||
 			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::RGBA8) == 0 ||
-			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::BAYER_GRBG8) == 0))
+			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::BAYER_GRBG8) == 0 ||
+			 imageMsgs[i]->encoding.compare(sensor_msgs::image_encodings::BAYER_RGGB8) == 0))
 		{
 
 			ROS_ERROR("Input rgb type must be image=mono8,mono16,rgb8,bgr8,bgra8,rgba8. Current rgb=%s",
@@ -1725,7 +1744,8 @@ bool convertStereoMsg(
 		cv::Mat & right,
 		rtabmap::StereoCameraModel & stereoModel,
 		tf::TransformListener & listener,
-		double waitForTransform)
+		double waitForTransform,
+		bool alreadyRectified)
 {
 	UASSERT(leftImageMsg.get() && rightImageMsg.get());
 
@@ -1799,6 +1819,41 @@ bool convertStereoMsg(
 					 "This warning is printed only once.",
 					 stereoModel.baseline());
 			shown = true;
+		}
+	}
+	else if(stereoModel.baseline() == 0 && alreadyRectified)
+	{
+		rtabmap::Transform stereoTransform = getTransform(
+				leftCamInfoMsg.header.frame_id,
+				rightCamInfoMsg.header.frame_id,
+				leftCamInfoMsg.header.stamp,
+				listener,
+				waitForTransform);
+		if(stereoTransform.isNull() || stereoTransform.x()<=0)
+		{
+			ROS_WARN("We cannot estimated the baseline of the rectified images with tf! (%s->%s = %s)",
+					rightCamInfoMsg.header.frame_id.c_str(), leftCamInfoMsg.header.frame_id.c_str(), stereoTransform.prettyPrint().c_str());
+		}
+		else
+		{
+			static bool warned = false;
+			if(!warned)
+			{
+				ROS_WARN("Right camera info doesn't have Tx set but we are assuming that stereo images are already rectified (see %s parameter). While not "
+						"recommended, we used TF to get the baseline (%s->%s = %fm) for convenience (e.g., D400 ir stereo issue). It is preferred to feed "
+						"a valid right camera info if stereo images are already rectified. This message is only printed once...",
+						rtabmap::Parameters::kRtabmapImagesAlreadyRectified().c_str(),
+						rightCamInfoMsg.header.frame_id.c_str(), leftCamInfoMsg.header.frame_id.c_str(), stereoTransform.x());
+				warned = true;
+			}
+			stereoModel = rtabmap::StereoCameraModel(
+					stereoModel.left().fx(),
+					stereoModel.left().fy(),
+					stereoModel.left().cx(),
+					stereoModel.left().cy(),
+					stereoTransform.x(),
+					stereoModel.localTransform(),
+					stereoModel.left().imageSize());
 		}
 	}
 	return true;
