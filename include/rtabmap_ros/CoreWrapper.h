@@ -137,9 +137,9 @@ private:
 				const sensor_msgs::PointCloud2& scan3dMsg,
 				const rtabmap_ros::OdomInfoConstPtr& odomInfoMsg,
 				const std::vector<rtabmap_ros::GlobalDescriptor> & globalDescriptorMsgs = std::vector<rtabmap_ros::GlobalDescriptor>(),
-				const std::vector<std::vector<rtabmap_ros::KeyPoint> > & localKeyPoints = std::vector<std::vector<rtabmap_ros::KeyPoint> >(),
-				const std::vector<std::vector<rtabmap_ros::Point3f> > & localPoints3d = std::vector<std::vector<rtabmap_ros::Point3f> >(),
-				const std::vector<cv::Mat> & localDescriptors = std::vector<cv::Mat>());
+				const std::vector<rtabmap_ros::KeyPoint> & localKeyPoints = std::vector<rtabmap_ros::KeyPoint>(),
+				const std::vector<rtabmap_ros::Point3f> & localPoints3d = std::vector<rtabmap_ros::Point3f>(),
+				const cv::Mat & localDescriptors = cv::Mat());
 	virtual void commonLaserScanCallback(
 				const nav_msgs::OdometryConstPtr & odomMsg,
 				const rtabmap_ros::UserDataConstPtr & userDataMsg,
@@ -182,7 +182,8 @@ private:
 			const rtabmap::Transform & odom = rtabmap::Transform(),
 			const std::string & odomFrameId = "",
 			const cv::Mat & odomCovariance = cv::Mat::eye(6,6,CV_64FC1),
-			const rtabmap::OdometryInfo & odomInfo = rtabmap::OdometryInfo());
+			const rtabmap::OdometryInfo & odomInfo = rtabmap::OdometryInfo(),
+			double timeMsgConversion = 0.0);
 
 	bool updateRtabmapCallback(std_srvs::Empty::Request&, std_srvs::Empty::Response&);
 	bool resetRtabmapCallback(std_srvs::Empty::Request&, std_srvs::Empty::Response&);
@@ -261,6 +262,11 @@ private:
 	bool genScan_;
 	double genScanMaxDepth_;
 	double genScanMinDepth_;
+	bool genDepth_;
+	int genDepthDecimation_;
+	int genDepthFillHolesSize_;
+	int genDepthFillIterations_;
+	double genDepthFillHolesError_;
 	int scanCloudMaxPoints_;
 
 	rtabmap::Transform mapToOdom_;
